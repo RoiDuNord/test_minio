@@ -5,5 +5,7 @@ import (
 )
 
 func main() {
-	server.Run()
+	if err := server.Run(); err != nil {
+		return
+	}
 }
