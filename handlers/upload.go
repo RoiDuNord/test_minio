@@ -22,13 +22,13 @@ const (
 )
 
 type ObjectResponse struct {
-	ID             string        `json:"id"`
-	Name           string        `json:"name"`
-	Type           string        `json:"type"`
-	Status         string        `json:"status"`
-	Message        string        `json:"message"`
-	Duration       time.Duration `json:"duration_ms"`
-	UploadDuration time.Duration `json:"uploadDuration_ms"`
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	Type           string  `json:"type"`
+	Status         string  `json:"status"`
+	Message        string  `json:"message"`
+	Duration       float64 `json:"duration_sec"`
+	UploadDuration float64 `json:"uploadDuration_sec"`
 }
 
 func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
@@ -114,8 +114,8 @@ func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
 		Type:           contentType,
 		Status:         statusCreated,
 		Message:        uploadMessage,
-		Duration:       duration,
-		UploadDuration: uploadDuration,
+		Duration:       duration.Seconds(),
+		UploadDuration: uploadDuration.Seconds(),
 	}
 	if err := json.NewEncoder(w).Encode(objectResponse); err != nil {
 		slog.Error("Ошибка формирования JSON ответа", "error", err)
