@@ -11,12 +11,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/go-chi/chi"
 	"github.com/minio/minio-go/v7"
 )
 
 const (
-	maxUploadSize = 300 << 20
 	statusCreated = "created"
 	uploadMessage = "файл успешно загружен"
 )
@@ -42,7 +41,12 @@ func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	objectID := chi.URLParam(r, "object_id")
+	if objectID == "" {
+		http.Error(w, "object_id is required", http.StatusBadRequest)
+		slog.Error("object_id не указан в запросе")
+		return
+	}
 
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -78,11 +82,9 @@ func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
 		slog.Info("Сгенерировано имя файла", "fileName", originalName)
 	}
 
-	objectID := uuid.New().String()
-
 	uploadStart := time.Now()
 	_, err = s.MinioClient.Client.PutObject(
-		r.Context(),
+		s.Ctx,
 		s.MinioClient.BucketName,
 		objectID,
 		bytes.NewReader(data),

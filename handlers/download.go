@@ -6,15 +6,15 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/go-chi/chi"
 	"github.com/minio/minio-go/v7"
 )
 
 func (s *Server) Download(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
-	objectID := strings.TrimPrefix(r.URL.Path, "/objects/download/")
+	objectID := chi.URLParam(r, "object_id")
 
 	slog.Info("Начало обработки запроса на скачивание")
 

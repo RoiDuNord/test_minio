@@ -50,6 +50,6 @@ func NewServer(ctx context.Context, minioClient *minio.Client, bucketName string
 }
 
 func setupRoutes(s *Server) {
-	s.Router.Post("/objects/upload", s.Upload)
-	s.Router.Get("/objects/download/{id}", s.Download)
+	s.Router.Post("/objects/{object_id}/content", s.Upload)
+	s.Router.Get("/objects/{object_id}/content", s.Download)
 }
