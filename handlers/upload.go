@@ -1,172 +1,42 @@
-package handlers
+// // загружает быстрее jpg и pdf
 
-import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
-	"log/slog"
-	"mime"
-	"net/http"
-	"path/filepath"
-	"time"
-
-	"github.com/go-chi/chi"
-	"github.com/minio/minio-go/v7"
-)
-
-const (
-	statusCreated = "created"
-	uploadMessage = "файл успешно загружен"
-)
-
-type ObjectResponse struct {
-	ID             string  `json:"id"`
-	Name           string  `json:"name"`
-	Type           string  `json:"type"`
-	Status         string  `json:"status"`
-	Message        string  `json:"message"`
-	Duration       float64 `json:"duration_sec"`
-	UploadDuration float64 `json:"uploadDuration_sec"`
-}
-
-func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
-	startTime := time.Now()
-
-	slog.Info("Начало обработки запроса на загрузку")
-
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		slog.Error("Недопустимый метод запроса")
-		return
-	}
-
-	objectID := chi.URLParam(r, "object_id")
-	if objectID == "" {
-		http.Error(w, "object_id is required", http.StatusBadRequest)
-		slog.Error("object_id не указан в запросе")
-		return
-	}
-
-	data, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		slog.Error("Ошибка чтения тела запроса", "error", err)
-		return
-	}
-
-	contentType := r.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = http.DetectContentType(data)
-	}
-
-	originalName := "default_name.bin"
-	if contentDisposition := r.Header.Get("Content-Disposition"); contentDisposition != "" {
-		_, params, err := mime.ParseMediaType(contentDisposition)
-		if err == nil {
-			if name, ok := params["filename"]; ok && name != "" {
-				originalName = name
-			}
-		}
-	}
-
-	if originalName == "default_name.bin" {
-		ext := filepath.Ext(originalName)
-		if ext == "" {
-			exts, _ := mime.ExtensionsByType(contentType)
-			if len(exts) > 0 {
-				ext = exts[0]
-			}
-		}
-		originalName = fmt.Sprintf("file_%d%s", time.Now().Unix(), ext)
-		slog.Info("Сгенерировано имя файла", "fileName", originalName)
-	}
-
-	uploadStart := time.Now()
-	_, err = s.MinioClient.Client.PutObject(
-		s.Ctx,
-		s.MinioClient.BucketName,
-		objectID,
-		bytes.NewReader(data),
-		int64(len(data)),
-		minio.PutObjectOptions{
-			ContentType: contentType,
-			UserMetadata: map[string]string{
-				"X-Uploaded-At":   time.Now().Format(time.RFC3339),
-				"X-Original-Name": originalName,
-			},
-		},
-	)
-	if err != nil {
-		http.Error(w, "Failed to upload to MinIO", http.StatusInternalServerError)
-		slog.Error("Ошибка загрузки в MinIO", "error", err)
-		return
-	}
-
-	duration := time.Since(startTime)
-	uploadDuration := time.Since(uploadStart)
-
-	slog.Info("Файл успешно загружен")
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	objectResponse := &ObjectResponse{
-		ID:             objectID,
-		Name:           originalName,
-		Type:           contentType,
-		Status:         statusCreated,
-		Message:        uploadMessage,
-		Duration:       duration.Seconds(),
-		UploadDuration: uploadDuration.Seconds(),
-	}
-	if err := json.NewEncoder(w).Encode(objectResponse); err != nil {
-		slog.Error("Ошибка формирования JSON ответа", "error", err)
-	}
-}
-
-// 2 вариант
 // package handlers
 
 // import (
 // 	"bytes"
-// 	"context"
 // 	"encoding/json"
 // 	"fmt"
 // 	"io"
 // 	"log/slog"
+// 	"math/rand"
 // 	"mime"
 // 	"net/http"
 // 	"path/filepath"
-// 	"runtime"
+// 	"strings"
 // 	"time"
 
-// 	"github.com/google/uuid"
+// 	"github.com/go-chi/chi"
 // 	"github.com/minio/minio-go/v7"
 // )
 
 // const (
-// 	maxUploadSize = 400 << 20
 // 	statusCreated = "created"
-// 	uploadMessage = "Файл успешно загружен"
-// 	uploadTimeout = 5 * time.Minute
+// 	uploadMessage = "файл успешно загружен"
 // )
 
 // type ObjectResponse struct {
-// 	ID             string        `json:"id"`
-// 	Name           string        `json:"name"`
-// 	Type           string        `json:"type"`
-// 	Status         string        `json:"status"`
-// 	Message        string        `json:"message"`
-// 	Duration       time.Duration `json:"duration_ms"`
-// 	UploadDuration time.Duration `json:"uploadDuration_ms"`
-// 	Size           int64         `json:"size_bytes"`
+// 	ID             string  `json:"id"`
+// 	Name           string  `json:"name"`
+// 	Type           string  `json:"type"`
+// 	Status         string  `json:"status"`
+// 	Message        string  `json:"message"`
+// 	Duration       float64 `json:"duration_sec"`
+// 	UploadDuration float64 `json:"uploadDuration_sec"`
 // }
 
 // func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
-// 	ctx, cancel := context.WithTimeout(r.Context(), uploadTimeout)
-// 	defer cancel()
-
 // 	startTime := time.Now()
+
 // 	slog.Info("Начало обработки запроса на загрузку")
 
 // 	if r.Method != http.MethodPost {
@@ -175,36 +45,11 @@ func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
 // 		return
 // 	}
 
-// 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
-
-// 	contentType := r.Header.Get("Content-Type")
-// 	if contentType == "" {
-// 		buf := make([]byte, 512)
-// 		n, _ := io.ReadFull(r.Body, buf)
-// 		contentType = http.DetectContentType(buf[:n])
-// 		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(buf[:n]), r.Body))
-// 	}
-
-// 	originalName := "default_name.bin"
-// 	if contentDisposition := r.Header.Get("Content-Disposition"); contentDisposition != "" {
-// 		_, params, err := mime.ParseMediaType(contentDisposition)
-// 		if err == nil {
-// 			if name, ok := params["filename"]; ok && name != "" {
-// 				originalName = name
-// 			}
-// 		}
-// 	}
-
-// 	if originalName == "default_name.bin" {
-// 		ext := filepath.Ext(originalName)
-// 		if ext == "" {
-// 			exts, _ := mime.ExtensionsByType(contentType)
-// 			if len(exts) > 0 {
-// 				ext = exts[0]
-// 			}
-// 		}
-// 		originalName = fmt.Sprintf("file_%d%s", time.Now().Unix(), ext)
-// 		slog.Info("Сгенерировано имя файла", "fileName", originalName)
+// 	objectID := chi.URLParam(r, "object_id")
+// 	if objectID == "" {
+// 		http.Error(w, "object_id is required", http.StatusBadRequest)
+// 		slog.Error("object_id не указан в запросе")
+// 		return
 // 	}
 
 // 	data, err := io.ReadAll(r.Body)
@@ -214,23 +59,57 @@ func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
 // 		return
 // 	}
 
-// 	objectID := uuid.New().String()
-// 	size := int64(len(data))
+// 	contentType := r.Header.Get("Content-Type")
+// 	if contentType == "" {
+// 		contentType = http.DetectContentType(data)
+// 	}
+
+// 	originalName := "default_name.bin"
+// 	if contentDisposition := r.Header.Get("Content-Disposition"); contentDisposition != "" {
+// 		_, params, err := mime.ParseMediaType(contentDisposition)
+// 		if err == nil {
+// 			if name, ok := params["filename"]; ok && name != "" {
+// 				name = filepath.Base(name)
+// 				name = strings.ReplaceAll(name, "..", "")
+// 				if name != "" {
+// 					originalName = name
+// 					slog.Info("Имя файла извлечено из Content-Disposition", "fileName", originalName)
+// 				}
+// 			}
+// 		} else {
+// 			slog.Warn("Ошибка разбора Content-Disposition", "error", err)
+// 		}
+// 	}
+
+// 	if originalName == "default_name.bin" {
+// 		ext := filepath.Ext(originalName)
+// 		if ext == "" {
+// 			exts, err := mime.ExtensionsByType(contentType)
+// 			if err != nil {
+// 				slog.Warn("Не удалось определить расширение по Content-Type", "content_type", contentType, "error", err)
+// 				ext = ".bin"
+// 			} else if len(exts) > 0 {
+// 				ext = exts[0]
+// 			} else {
+// 				ext = ".bin"
+// 			}
+// 		}
+// 		originalName = fmt.Sprintf("file_%d_%d%s", time.Now().UnixNano(), rand.Intn(1000), ext)
+// 		slog.Info("Сгенерировано имя файла", "fileName", originalName)
+// 	}
 
 // 	uploadStart := time.Now()
 // 	_, err = s.MinioClient.Client.PutObject(
-// 		ctx,
+// 		s.Ctx,
 // 		s.MinioClient.BucketName,
 // 		objectID,
 // 		bytes.NewReader(data),
-// 		size,
+// 		int64(len(data)),
 // 		minio.PutObjectOptions{
 // 			ContentType: contentType,
-// 			NumThreads:  uint(runtime.NumCPU()),
 // 			UserMetadata: map[string]string{
 // 				"X-Uploaded-At":   time.Now().Format(time.RFC3339),
 // 				"X-Original-Name": originalName,
-// 				"X-File-Size":     fmt.Sprintf("%d", size),
 // 			},
 // 		},
 // 	)
@@ -245,138 +124,140 @@ func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
 
 // 	slog.Info("Файл успешно загружен")
 
-//		w.Header().Set("Content-Type", "application/json")
-//		w.WriteHeader(http.StatusCreated)
-//		objectResponse := &ObjectResponse{
-//			ID:             objectID,
-//			Name:           originalName,
-//			Type:           contentType,
-//			Status:         statusCreated,
-//			Message:        uploadMessage,
-//			Duration:       duration,
-//			UploadDuration: uploadDuration,
-//			Size:           size,
-//		}
-//		if err := json.NewEncoder(w).Encode(objectResponse); err != nil {
-//			slog.Error("Ошибка формирования JSON ответа", "error", err)
-//		}
-// //	}
+// 		w.Header().Set("Content-Type", "application/json")
+// 		w.WriteHeader(http.StatusCreated)
+// 		objectResponse := &ObjectResponse{
+// 			ID:             objectID,
+// 			Name:           originalName,
+// 			Type:           contentType,
+// 			Status:         statusCreated,
+// 			Message:        uploadMessage,
+// 			Duration:       duration.Seconds(),
+// 			UploadDuration: uploadDuration.Seconds(),
+// 		}
+// 		if err := json.NewEncoder(w).Encode(objectResponse); err != nil {
+// 			slog.Error("Ошибка формирования JSON ответа", "error", err)
+// 		}
+// 	}
 
-// 3 вариант
+// загружает быстрее mp3
+
 // package handlers
 
 // import (
 // 	"bytes"
-// 	"context"
 // 	"encoding/json"
 // 	"fmt"
 // 	"io"
 // 	"log/slog"
+// 	"math/rand"
 // 	"mime"
 // 	"net/http"
 // 	"path/filepath"
 // 	"strings"
 // 	"time"
 
-// 	"github.com/google/uuid"
+// 	"github.com/go-chi/chi"
 // 	"github.com/minio/minio-go/v7"
 // )
 
-// const (
-// 	maxUploadSize  = 400 << 20 // 400 MB
-// 	statusCreated  = "created"
-// 	uploadMessage  = "Файл успешно загружен"
-// 	uploadTimeout  = 5 * time.Minute
-// 	defaultThreads = 16 // Значение по умолчанию для параллельной загрузки
-// )
-
+// // Предполагаемая структура для ответа
 // type ObjectResponse struct {
-// 	ID             string        `json:"id"`
-// 	Name           string        `json:"name"`
-// 	Type           string        `json:"type"`
-// 	Status         string        `json:"status"`
-// 	Message        string        `json:"message"`
-// 	Duration       time.Duration `json:"duration_ms"`
-// 	UploadDuration time.Duration `json:"uploadDuration_ms"`
-// 	Size           int64         `json:"size_bytes"`
+// 	ID             string  `json:"id"`
+// 	Name           string  `json:"name"`
+// 	Type           string  `json:"type"`
+// 	Status         string  `json:"status"`
+// 	Message        string  `json:"message"`
+// 	Duration       float64 `json:"duration"`
+// 	UploadDuration float64 `json:"upload_duration"`
 // }
 
-// func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
-// 	ctx, cancel := context.WithTimeout(r.Context(), uploadTimeout)
-// 	defer cancel()
+// // Константы для ответа
+// const (
+// 	statusCreated   = "created"
+// 	uploadMessage   = "File uploaded successfully"
+// 	defaultFileName = "default_name.bin"
+// )
 
-// 	startTime := time.Now()
-// 	slog.Info("Начало обработки запроса на загрузку")
-
+// // checkRequestMethod проверяет, что метод запроса является POST
+// func checkRequestMethod(r *http.Request) error {
 // 	if r.Method != http.MethodPost {
-// 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-// 		slog.Error("Недопустимый метод запроса", "method", r.Method)
-// 		return
+// 		return fmt.Errorf("method not allowed: %s", r.Method)
 // 	}
+// 	return nil
+// }
 
-// 	// Проверяем Content-Length, если он указан, чтобы избежать лишней обработки
-// 	contentLength := r.ContentLength
-// 	if contentLength > maxUploadSize {
-// 		errorMsg := fmt.Sprintf("Файл слишком большой. Максимальный допустимый размер: %d байт", maxUploadSize)
-// 		http.Error(w, errorMsg, http.StatusRequestEntityTooLarge)
-// 		slog.Error("Файл слишком большой", "contentLength", contentLength, "maxSize", maxUploadSize)
-// 		return
+// // getObjectID извлекает object_id из параметров URL
+// func getObjectID(r *http.Request) (string, error) {
+// 	objectID := chi.URLParam(r, "object_id")
+// 	if objectID == "" {
+// 		return "", fmt.Errorf("object_id is required")
 // 	}
+// 	return objectID, nil
+// }
 
-// 	// Ограничиваем размер тела запроса
-// 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
-
-// 	// Определяем Content-Type из заголовка или через DetectContentType
+// // determineContentType определяет Content-Type из заголовка или данных
+// func determineContentType(r *http.Request, data []byte) string {
 // 	contentType := r.Header.Get("Content-Type")
 // 	if contentType == "" {
-// 		buf := make([]byte, 512)
-// 		n, err := io.ReadAtLeast(r.Body, buf, 1)
-// 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-// 			http.Error(w, "Failed to read request body for content detection", http.StatusBadRequest)
-// 			slog.Error("Ошибка чтения тела запроса для определения типа", "error", err)
-// 			return
-// 		}
-// 		contentType = http.DetectContentType(buf[:n])
-// 		// Возвращаем прочитанные данные в поток
-// 		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(buf[:n]), r.Body))
+// 		contentType = http.DetectContentType(data)
 // 	}
+// 	return contentType
+// }
 
-// 	// Определяем оригинальное имя файла
-// 	originalName := "default_name.bin"
+// // extractFileName извлекает имя файла из Content-Disposition
+// func extractFileName(r *http.Request) (string, error) {
+// 	originalName := defaultFileName
 // 	if contentDisposition := r.Header.Get("Content-Disposition"); contentDisposition != "" {
 // 		_, params, err := mime.ParseMediaType(contentDisposition)
 // 		if err == nil {
 // 			if name, ok := params["filename"]; ok && name != "" {
-// 				originalName = name
+// 				name = filepath.Base(name)
+// 				name = strings.ReplaceAll(name, "..", "")
+// 				if name != "" {
+// 					originalName = name
+// 					slog.Info("Имя файла извлечено из Content-Disposition", "fileName", originalName)
+// 					return originalName, nil
+// 				}
 // 			}
+// 		} else {
+// 			slog.Warn("Ошибка разбора Content-Disposition", "error", err)
 // 		}
 // 	}
+// 	return originalName, nil
+// }
 
-// 	if originalName == "default_name.bin" {
-// 		ext := filepath.Ext(originalName)
-// 		if ext == "" {
-// 			if exts, _ := mime.ExtensionsByType(contentType); len(exts) > 0 {
-// 				ext = exts[0]
-// 			}
+// // generateFileName генерирует имя файла на основе Content-Type, если оно не указано
+// func generateFileName(contentType string) string {
+// 	originalName := defaultFileName
+// 	ext := filepath.Ext(originalName)
+// 	if ext == "" {
+// 		exts, err := mime.ExtensionsByType(contentType)
+// 		if err != nil {
+// 			slog.Warn("Не удалось определить расширение по Content-Type", "content_type", contentType, "error", err)
+// 			ext = ".bin"
+// 		} else if len(exts) > 0 {
+// 			ext = exts[0]
+// 		} else {
+// 			ext = ".bin"
 // 		}
-// 		originalName = fmt.Sprintf("file_%d%s", time.Now().Unix(), ext)
-// 		slog.Info("Сгенерировано имя файла", "fileName", originalName)
 // 	}
+// 	originalName = fmt.Sprintf("file_%d_%d%s", time.Now().UnixNano(), rand.Intn(1000), ext)
+// 	slog.Info("Сгенерировано имя файла", "fileName", originalName)
+// 	return originalName
+// }
 
-// 	// Генерируем уникальный ID для объекта
-// 	objectID := uuid.New().String()
-
-// 	// Загружаем файл напрямую в MinIO без чтения в память
+// // uploadToMinIO загружает файл в MinIO, используя io.Reader для минимизации использования памяти
+// func (s *Server) uploadToMinIO(objectID, contentType, originalName string, body io.Reader, size int64) error {
 // 	uploadStart := time.Now()
-// 	info, err := s.MinioClient.Client.PutObject(
-// 		ctx,
+// 	_, err := s.MinioClient.Client.PutObject(
+// 		s.Ctx,
 // 		s.MinioClient.BucketName,
 // 		objectID,
-// 		r.Body,
-// 		-1, // Размер неизвестен заранее, MinIO сам определит
+// 		body,
+// 		size,
 // 		minio.PutObjectOptions{
 // 			ContentType: contentType,
-// 			NumThreads:  defaultThreads, // Используем фиксированное значение или настраиваемое
 // 			UserMetadata: map[string]string{
 // 				"X-Uploaded-At":   time.Now().Format(time.RFC3339),
 // 				"X-Original-Name": originalName,
@@ -384,37 +265,332 @@ func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
 // 		},
 // 	)
 // 	if err != nil {
-// 		// Проверяем, связана ли ошибка с ограничением размера (Nginx 413)
-// 		errorMsg := err.Error()
-// 		if strings.Contains(errorMsg, "413 Request Entity Too Large") {
-// 			http.Error(w, "Файл слишком большой для сервера. Пожалуйста, уменьшите размер файла или обратитесь к администратору.", http.StatusRequestEntityTooLarge)
-// 			slog.Error("Ошибка загрузки в MinIO: ограничение размера на сервере (Nginx 413)", "objectID", objectID, "error", errorMsg)
-// 		} else {
-// 			http.Error(w, "Failed to upload to MinIO", http.StatusInternalServerError)
-// 			slog.Error("Ошибка загрузки в MinIO", "objectID", objectID, "error", errorMsg)
-// 		}
-// 		return
+// 		return fmt.Errorf("failed to upload to MinIO: %v", err)
 // 	}
+// 	slog.Info("Файл успешно загружен в MinIO", "object_id", objectID, "upload_duration", time.Since(uploadStart))
+// 	return nil
+// }
+
+// // sendJSONResponse формирует и отправляет JSON-ответ клиенту
+// func sendJSONResponse(w http.ResponseWriter, objectID, originalName, contentType string, startTime, uploadStart time.Time) {
+// 	w.Header().Set("Content-Type", "application/json")
+// 	w.WriteHeader(http.StatusCreated)
 
 // 	duration := time.Since(startTime)
 // 	uploadDuration := time.Since(uploadStart)
 
-// 	slog.Info("Файл успешно загружен", "objectID", objectID, "size_bytes", info.Size)
-
-// 	// Формируем и отправляем ответ
-// 	w.Header().Set("Content-Type", "application/json")
-// 	w.WriteHeader(http.StatusCreated)
-// 	objectResponse := &ObjectResponse{
+// 	response := &ObjectResponse{
 // 		ID:             objectID,
 // 		Name:           originalName,
 // 		Type:           contentType,
 // 		Status:         statusCreated,
 // 		Message:        uploadMessage,
-// 		Duration:       duration,
-// 		UploadDuration: uploadDuration,
-// 		Size:           info.Size,
+// 		Duration:       duration.Seconds(),
+// 		UploadDuration: uploadDuration.Seconds(),
 // 	}
-// 	if err := json.NewEncoder(w).Encode(objectResponse); err != nil {
+// 	if err := json.NewEncoder(w).Encode(response); err != nil {
 // 		slog.Error("Ошибка формирования JSON ответа", "error", err)
 // 	}
 // }
+
+// // Upload обрабатывает запрос на загрузку файла
+// func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
+// 	startTime := time.Now()
+// 	slog.Info("Начало обработки запроса на загрузку")
+
+// 	// Проверка метода запроса
+// 	if err := checkRequestMethod(r); err != nil {
+// 		http.Error(w, err.Error(), http.StatusMethodNotAllowed)
+// 		slog.Error("Недопустимый метод запроса", "error", err)
+// 		return
+// 	}
+
+// 	// Получение objectID
+// 	objectID, err := getObjectID(r)
+// 	if err != nil {
+// 		http.Error(w, err.Error(), http.StatusBadRequest)
+// 		slog.Error("object_id не указан в запросе", "error", err)
+// 		return
+// 	}
+
+// 	// Извлечение имени файла
+// 	originalName, err := extractFileName(r)
+// 	if err != nil {
+// 		slog.Warn("Не удалось извлечь имя файла", "error", err)
+// 	}
+
+// 	// Определение Content-Type
+// 	contentType := r.Header.Get("Content-Type")
+// 	if contentType == "" {
+// 		// Читаем первые 512 байт для определения Content-Type
+// 		buf := make([]byte, 512)
+// 		n, err := io.ReadAtLeast(r.Body, buf, 1)
+// 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+// 			http.Error(w, "Failed to read request body", http.StatusBadRequest)
+// 			slog.Error("Ошибка чтения тела запроса", "error", err)
+// 			return
+// 		}
+// 		contentType = http.DetectContentType(buf[:n])
+// 		// Создаем новый Reader для оставшихся данных
+// 		body := io.MultiReader(bytes.NewReader(buf[:n]), r.Body)
+// 		// Загрузка в MinIO
+// 		uploadStart := time.Now()
+// 		if err := s.uploadToMinIO(objectID, contentType, originalName, body, -1); err != nil {
+// 			http.Error(w, err.Error(), http.StatusInternalServerError)
+// 			slog.Error("Ошибка загрузки в MinIO", "error", err)
+// 			return
+// 		}
+// 		// Отправка JSON-ответа
+// 		sendJSONResponse(w, objectID, originalName, contentType, startTime, uploadStart)
+// 	} else {
+// 		// Загрузка в MinIO напрямую, если Content-Type указан
+// 		uploadStart := time.Now()
+// 		if err := s.uploadToMinIO(objectID, contentType, originalName, r.Body, -1); err != nil {
+// 			http.Error(w, err.Error(), http.StatusInternalServerError)
+// 			slog.Error("Ошибка загрузки в MinIO", "error", err)
+// 			return
+// 		}
+// 		// Отправка JSON-ответа
+// 		sendJSONResponse(w, objectID, originalName, contentType, startTime, uploadStart)
+// 	}
+
+// 	// Генерация имени файла, если оно не указано
+// 	if originalName == defaultFileName {
+// 		originalName = generateFileName(contentType)
+// 	}
+// }
+
+// учти сильные стороны каждого и выдай код
+
+package handlers
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"math/rand"
+	"mime"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi"
+	"github.com/minio/minio-go/v7"
+)
+
+const (
+	statusCreated   = "created"
+	uploadMessage   = "файл успешно загружен"
+	defaultFileName = "default_name.bin"
+)
+
+type ObjectResponse struct {
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	Type           string  `json:"type"`
+	Status         string  `json:"status"`
+	Message        string  `json:"message"`
+	Duration       float64 `json:"duration_sec"`
+	UploadDuration float64 `json:"uploadDuration_sec"`
+}
+
+func checkRequestMethod(r *http.Request) error {
+	if r.Method != http.MethodPost {
+		return fmt.Errorf("method not allowed: %s", r.Method)
+	}
+	return nil
+}
+
+func getObjectID(r *http.Request) (string, error) {
+	objectID := chi.URLParam(r, "object_id")
+	if objectID == "" {
+		return "", fmt.Errorf("object_id is required")
+	}
+	return objectID, nil
+}
+
+// extractFileName извлекает имя файла из Content-Disposition
+func extractFileName(r *http.Request) (string, error) {
+	originalName := defaultFileName
+	if contentDisposition := r.Header.Get("Content-Disposition"); contentDisposition != "" {
+		_, params, err := mime.ParseMediaType(contentDisposition)
+		if err == nil {
+			if name, ok := params["filename"]; ok && name != "" {
+				name = filepath.Base(name)
+				name = strings.ReplaceAll(name, "..", "")
+				if name != "" {
+					originalName = name
+					slog.Info("Имя файла извлечено из Content-Disposition", "fileName", originalName)
+					return originalName, nil
+				}
+			}
+		} else {
+			slog.Warn("Ошибка разбора Content-Disposition", "error", err)
+		}
+	}
+	return originalName, nil
+}
+
+func generateFileName(contentType string) string {
+	originalName := defaultFileName
+	ext := filepath.Ext(originalName)
+	if ext == "" {
+		exts, err := mime.ExtensionsByType(contentType)
+		if err != nil {
+			slog.Warn("Не удалось определить расширение по Content-Type", "content_type", contentType, "error", err)
+			ext = ".bin"
+		} else if len(exts) > 0 {
+			ext = exts[0]
+		} else {
+			ext = ".bin"
+		}
+		originalName = fmt.Sprintf("file_%d_%d%s", time.Now().UnixNano(), rand.Intn(1000), ext)
+		slog.Info("Сгенерировано имя файла", "fileName", originalName)
+	}
+	return originalName
+}
+
+func isStreamContent(contentType string) bool {
+	contentType = strings.ToLower(contentType)
+	return strings.HasPrefix(contentType, "audio/") ||
+		strings.HasPrefix(contentType, "video/") ||
+		strings.HasPrefix(contentType, "application/zip") ||
+		strings.HasPrefix(contentType, "application/x-zip-compressed")
+}
+
+func (s *Server) uploadDocumentToMinIO(objectID, contentType, originalName string, data []byte) error {
+	uploadStart := time.Now()
+	_, err := s.MinioClient.Client.PutObject(
+		s.Ctx,
+		s.MinioClient.BucketName,
+		objectID,
+		bytes.NewReader(data),
+		int64(len(data)),
+		minio.PutObjectOptions{
+			ContentType: contentType,
+			UserMetadata: map[string]string{
+				"X-Uploaded-At":   time.Now().Format(time.RFC3339),
+				"X-Original-Name": originalName,
+			},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upload document to MinIO: %v", err)
+	}
+	slog.Info("Документ успешно загружен в MinIO", "object_id", objectID, "upload_duration", time.Since(uploadStart).Seconds())
+	return nil
+}
+
+func (s *Server) uploadMediaToMinIO(objectID, contentType, originalName string, body io.Reader, size int64) error {
+	uploadStart := time.Now()
+	_, err := s.MinioClient.Client.PutObject(
+		s.Ctx,
+		s.MinioClient.BucketName,
+		objectID,
+		body,
+		size,
+		minio.PutObjectOptions{
+			ContentType: contentType,
+			UserMetadata: map[string]string{
+				"X-Uploaded-At":   time.Now().Format(time.RFC3339),
+				"X-Original-Name": originalName,
+			},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upload media to MinIO: %v", err)
+	}
+	slog.Info("Медиафайл успешно загружен в MinIO", "object_id", objectID, "upload_duration", time.Since(uploadStart).Seconds())
+	return nil
+}
+
+func sendJSONResponse(w http.ResponseWriter, objectID, originalName, contentType string, startTime, uploadStart time.Time) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+
+	duration := time.Since(startTime)
+	uploadDuration := time.Since(uploadStart)
+
+	response := &ObjectResponse{
+		ID:             objectID,
+		Name:           originalName,
+		Type:           contentType,
+		Status:         statusCreated,
+		Message:        uploadMessage,
+		Duration:       duration.Seconds(),
+		UploadDuration: uploadDuration.Seconds(),
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Ошибка формирования JSON ответа", "error", err)
+	}
+}
+
+func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+	slog.Info("Начало обработки запроса на загрузку")
+
+	if err := checkRequestMethod(r); err != nil {
+		http.Error(w, err.Error(), http.StatusMethodNotAllowed)
+		slog.Error("Недопустимый метод запроса", "error", err)
+		return
+	}
+
+	originalName, err := extractFileName(r)
+	if err != nil {
+		slog.Warn("Не удалось извлечь имя файла", "error", err)
+	}
+
+	objectID, err := getObjectID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		slog.Error("Не удалось извлечь object_id", "error", err)
+	}
+	slog.Info("Object_id успешно получен", "object_id", objectID)
+
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "" {
+		buf := make([]byte, 512)
+		n, err := io.ReadAtLeast(r.Body, buf, 1)
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			http.Error(w, "Failed to read request body", http.StatusBadRequest)
+			slog.Error("Ошибка чтения тела запроса", "error", err)
+			return
+		}
+		contentType = http.DetectContentType(buf[:n])
+		slog.Info("Определён Content-Type", "content_type", contentType)
+		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(buf[:n]), r.Body))
+	}
+
+	uploadStart := time.Now()
+
+	if isStreamContent(contentType) {
+		// Для медиафайлов и ZIP используем потоковую загрузку
+		if err := s.uploadMediaToMinIO(objectID, contentType, originalName, r.Body, -1); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			slog.Error("Ошибка загрузки медиафайла в MinIO", "object_id", objectID, "error", err)
+			return
+		}
+	} else {
+		// Для документов и изображений читаем данные в память
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read request body", http.StatusBadRequest)
+			slog.Error("Ошибка чтения тела запроса", "error", err)
+			return
+		}
+		if err := s.uploadDocumentToMinIO(objectID, contentType, originalName, data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			slog.Error("Ошибка загрузки документа в MinIO", "object_id", objectID, "error", err)
+			return
+		}
+	}
+
+	if originalName == defaultFileName {
+		originalName = generateFileName(contentType)
+	}
+
+	sendJSONResponse(w, objectID, originalName, contentType, startTime, uploadStart)
+}

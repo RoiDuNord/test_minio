@@ -1,148 +1,177 @@
 package handlers
 
 import (
+	"archive/zip"
+	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"mime"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi"
 	"github.com/minio/minio-go/v7"
 )
 
-func (s *Server) Download(w http.ResponseWriter, r *http.Request) {
-	startTime := time.Now()
-	objectID := chi.URLParam(r, "object_id")
+// FileHandler определяет обработчик для конкретного типа контента
+type FileHandler func(w http.ResponseWriter, fileName string, content io.Reader, contentType string) error
 
-	slog.Info("Начало обработки запроса на скачивание")
+// getContentType определяет Content-Type на основе расширения файла
+func getContentType(fileName string) string {
+	ext := strings.ToLower(filepath.Ext(fileName))
+	defaultContentType := "application/octet-stream"
+	if contentType := mime.TypeByExtension(ext); contentType != "" {
+		return contentType
+	}
+	return defaultContentType
+}
 
-	minioClient := s.MinioClient.Client
-	bucketName := s.MinioClient.BucketName
-
-	stat, err := minioClient.StatObject(r.Context(), bucketName, objectID, minio.StatObjectOptions{})
+// handleFile отправляет файл клиенту как вложение (attachment)
+func handleFile(w http.ResponseWriter, fileName string, content io.Reader, contentType string) error {
+	slog.Info("Отправка файла клиенту", "file", fileName)
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
+	_, err := io.Copy(w, content)
 	if err != nil {
-		slog.Error("Ошибка при получении метаданных объекта", "error", err)
-		http.Error(w, "File not found", http.StatusNotFound)
-		return
+		return fmt.Errorf("не удалось отправить данные файла: %v", err)
+	}
+	return nil
+}
+
+// readObjectToBuffer читает данные объекта в буфер
+func readObjectToBuffer(object io.Reader) (*bytes.Buffer, error) {
+	buf := new(bytes.Buffer)
+	_, err := io.Copy(buf, object)
+	return buf, err
+}
+
+// findSuitableFile ищет подходящий файл в ZIP-архиве
+func findSuitableFile(zipReader *zip.Reader) (*zip.File, error) {
+	for _, file := range zipReader.File {
+		if !file.FileInfo().IsDir() && !strings.HasPrefix(filepath.Base(file.Name), ".") {
+			return file, nil
+		}
+	}
+	return nil, fmt.Errorf("в ZIP-архиве не найдено подходящего файла")
+}
+
+// processZip обрабатывает ZIP-архив
+func processZip(w http.ResponseWriter, r *http.Request, object io.Reader, size int64) error {
+	slog.Info("Обработка ZIP-архива")
+	buf, err := readObjectToBuffer(object)
+	if err != nil {
+		return fmt.Errorf("не удалось прочитать данные ZIP: %v", err)
 	}
 
+	zipReader, err := zip.NewReader(bytes.NewReader(buf.Bytes()), size)
+	if err != nil {
+		return fmt.Errorf("не удалось прочитать ZIP-архив: %v", err)
+	}
+
+	innerFile, err := findSuitableFile(zipReader)
+	if err != nil {
+		return err
+	}
+
+	rc, err := innerFile.Open()
+	if err != nil {
+		return fmt.Errorf("не удалось открыть файл %s в ZIP: %v", innerFile.Name, err)
+	}
+	defer rc.Close()
+
+	contentType := getContentType(innerFile.Name)
+	handler := FileHandler(handleFile)
+	return handler(w, innerFile.Name, rc, contentType)
+}
+
+// getObjectStat получает метаданные объекта из MinIO
+func (s *Server) getObjectStat(ctx context.Context, objectID string) (minio.ObjectInfo, error) {
+	return s.MinioClient.Client.StatObject(ctx, s.MinioClient.BucketName, objectID, minio.StatObjectOptions{})
+}
+
+// getObject скачивает объект из MinIO
+func (s *Server) getObject(ctx context.Context, objectID string) (*minio.Object, error) {
+	return s.MinioClient.Client.GetObject(ctx, s.MinioClient.BucketName, objectID, minio.GetObjectOptions{})
+}
+
+// determineFileName определяет имя файла для скачивания
+func (s *Server) determineFileName(stat minio.ObjectInfo) string {
 	originalName := stat.UserMetadata["X-Original-Name"]
-	slog.Info("Имя", "name", originalName)
-	if originalName == "" {
-		if exts, _ := mime.ExtensionsByType(stat.ContentType); len(exts) > 0 {
-			originalName = fmt.Sprintf("file_%d%s", time.Now().Unix(), exts[0])
-		} else {
-			originalName = objectID
-		}
-		slog.Info("Сгенерировано имя файла для скачивания", "fileName", originalName)
-	} else {
+	if originalName != "" {
 		slog.Info("Найдено оригинальное имя файла в метаданных", "original_name", originalName)
+		return originalName
 	}
+	return stat.Key
+}
 
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, originalName))
-	w.Header().Set("Content-Type", stat.ContentType)
-	slog.Info("Установлены заголовки ответа")
-
+// handleRegularFile обрабатывает обычный файл (не ZIP)
+func (s *Server) handleRegularFile(w http.ResponseWriter, r *http.Request, objectID string, stat minio.ObjectInfo, startTime time.Time) {
+	fileName := s.determineFileName(stat)
 	downloadTime := time.Now()
-	object, err := minioClient.GetObject(r.Context(), bucketName, objectID, minio.GetObjectOptions{})
+
+	object, err := s.getObject(r.Context(), objectID)
 	if err != nil {
-		slog.Error("Ошибка при получении объекта из MinIO", "error", err)
-		http.Error(w, "Failed to download file", http.StatusInternalServerError)
+		slog.Error("Не удалось получить объект из MinIO", "object_id", objectID, "error", err)
+		http.Error(w, "Не удалось скачать файл", http.StatusInternalServerError)
 		return
 	}
-	defer func() {
-		if err := object.Close(); err != nil {
-			slog.Error("Ошибка при закрытии объекта", "error", err)
-		}
-	}()
+	defer object.Close()
 
-	bytesWritten, err := io.Copy(w, object)
-	if err != nil {
-		slog.Error("Ошибка при отправке файла клиенту", "error", err)
+	handler := FileHandler(handleFile)
+	if err := handler(w, fileName, object, stat.ContentType); err != nil {
+		slog.Error("Не удалось отправить файл клиенту", "object_id", objectID, "error", err)
+		http.Error(w, "Не удалось отправить данные файла", http.StatusInternalServerError)
 		return
 	}
 
 	duration := time.Since(startTime)
 	downloadDuration := time.Since(downloadTime)
-	slog.Info("Файл успешно отправлен клиенту", "bytesWritten", bytesWritten, "duration", duration, "downloadTime", downloadDuration)
+	slog.Info("Файл отправлен клиенту", "object_id", objectID, "duration", duration, "download_time", downloadDuration)
 }
 
-// package handlers
+// handleZipFile обрабатывает ZIP-архив
+func (s *Server) handleZipFile(w http.ResponseWriter, r *http.Request, objectID string, stat minio.ObjectInfo, startTime time.Time) {
+	downloadTime := time.Now()
+	object, err := s.getObject(r.Context(), objectID)
+	if err != nil {
+		slog.Error("Не удалось получить объект из MinIO", "object_id", objectID, "error", err)
+		http.Error(w, "Не удалось скачать файл", http.StatusInternalServerError)
+		return
+	}
+	defer object.Close()
 
-// import (
-// 	"fmt"
-// 	"io"
-// 	"mime"
-// 	"net/http"
-// 	"strings"
-// 	"time"
+	err = processZip(w, r, object, stat.Size)
+	if err != nil {
+		slog.Error("Не удалось обработать ZIP-архив", "object_id", objectID, "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-// 	"github.com/minio/minio-go/v7"
-// 	"log/slog"
-// )
+	duration := time.Since(startTime)
+	downloadDuration := time.Since(downloadTime)
+	slog.Info("ZIP-архив обработан и отправлен клиенту", "object_id", objectID, "duration", duration, "download_time", downloadDuration)
+}
 
-// const (
-// 	downloadBufferSize = 64 << 10
-// 	downloadPathPrefix = "/objects/download/"
-// )
+// Download обрабатывает запрос на скачивание файла из MinIO
+func (s *Server) Download(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+	objectID := chi.URLParam(r, "object_id")
+	slog.Info("Начало обработки запроса на скачивание", "object_id", objectID)
 
-// func (s *Server) Download(w http.ResponseWriter, r *http.Request) {
-// 	startTime := time.Now()
-// 	objectID := strings.TrimPrefix(r.URL.Path, downloadPathPrefix)
+	stat, err := s.getObjectStat(r.Context(), objectID)
+	if err != nil {
+		slog.Error("Не удалось получить метаданные объекта", "object_id", objectID, "error", err)
+		http.Error(w, "Файл не найден", http.StatusNotFound)
+		return
+	}
 
-// 	// Параллельно получаем метаданные
-// 	statCh := make(chan *minio.ObjectInfo, 1)
-// 	errCh := make(chan error, 1)
-// 	go func() {
-// 		stat, err := s.MinioClient.Client.StatObject(r.Context(), s.MinioClient.BucketName, objectID, minio.StatObjectOptions{})
-// 		if err != nil {
-// 			errCh <- err
-// 			return
-// 		}
-// 		statCh <- &stat
-// 	}()
-
-// 	select {
-// 	case stat := <-statCh:
-// 		// Определяем имя файла
-// 		fileName := stat.UserMetadata["X-Original-Name"]
-// 		if fileName == "" {
-// 			if exts, _ := mime.ExtensionsByType(stat.ContentType); len(exts) > 0 {
-// 				fileName = fmt.Sprintf("file_%d%s", time.Now().Unix(), exts[0])
-// 			} else {
-// 				fileName = objectID
-// 			}
-// 		}
-
-// 		// Устанавливаем заголовки
-// 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-// 		w.Header().Set("Content-Type", stat.ContentType)
-// 		w.Header().Set("Content-Length", fmt.Sprintf("%d", stat.Size))
-
-// 		// Скачивание с буферизацией
-// 		object, err := s.MinioClient.Client.GetObject(r.Context(), s.MinioClient.BucketName, objectID, minio.GetObjectOptions{})
-// 		if err != nil {
-// 			slog.Error("Failed to get object from MinIO", "objectID", objectID, "error", err)
-// 			http.Error(w, "Failed to download file", http.StatusInternalServerError)
-// 			return
-// 		}
-// 		defer object.Close()
-
-// 		// Используем буфер 64KB для экономии памяти
-// 		buf := make([]byte, downloadBufferSize)
-// 		if _, err := io.CopyBuffer(w, object, buf); err != nil {
-// 			slog.Error("Failed to copy object to response", "objectID", objectID, "error", err)
-// 			http.Error(w, "Failed to send file", http.StatusInternalServerError)
-// 			return
-// 		}
-
-// 		slog.Info("File downloaded successfully", "objectID", objectID, "size_MB", stat.Size/(1<<20), "duration", time.Since(startTime))
-
-// 	case err := <-errCh:
-// 		slog.Error("Failed to get object metadata", "objectID", objectID, "error", err)
-// 		http.Error(w, fmt.Sprintf("File not found: %v", err), http.StatusNotFound)
-// 		return
-// 	}
-// }
+	if stat.ContentType == "application/zip" {
+		s.handleZipFile(w, r, objectID, stat, startTime)
+		return
+	}
+	s.handleRegularFile(w, r, objectID, stat, startTime)
+}
