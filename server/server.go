@@ -9,9 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 	"test_minio/bucket"
-	"test_minio/minio_client"
+	"test_minio/client"
 	"test_minio/config"
-	"test_minio/handlers"
+	"test_minio/handler"
 )
 
 func Run() error {
@@ -33,7 +33,7 @@ func Run() error {
 		return err
 	}
 
-	s := handlers.NewServer(ctx, minioClient, cfg.BucketName)
+	s := handler.NewServer(ctx, minioClient, cfg.BucketName)
 
 	go startHTTPServer(s.HTTPServer, s.HTTPServer.Addr)
 
@@ -52,7 +52,7 @@ func startHTTPServer(server *http.Server, port string) {
 	}
 }
 
-func shutdownServer(s *handlers.Server) error {
+func shutdownServer(s *handler.Server) error {
 	server := s.HTTPServer
 	shutdownSignals := make(chan os.Signal, 1)
 	signal.Notify(shutdownSignals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
