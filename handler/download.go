@@ -2,7 +2,9 @@ package handler
 
 import (
 	"archive/zip"
-	"bytes"
+	"strconv"
+
+	//	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -28,9 +30,21 @@ import (
 // @Failure 404 {object} string "Object not found"
 // @Failure 500 {object} string "Internal server error"
 // @Router /objects/{object_id}/content [get]
+
 func (s *Server) Download(w http.ResponseWriter, r *http.Request) {
+	if err := checkGetMethod(r); err != nil {
+		http.Error(w, err.Error(), http.StatusMethodNotAllowed)
+		slog.Error("Недопустимый метод запроса", "error", err)
+		return
+	}
+
 	startTime := time.Now()
-	objectID := chi.URLParam(r, "object_id")
+	objectID, crc, isZip, err := ParseObjectIDandCRC(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	slog.Info("Начало обработки запроса на скачивание", "object_id", objectID)
 
 	stat, err := s.getObjectStat(r.Context(), objectID)
@@ -40,14 +54,59 @@ func (s *Server) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if stat.ContentType == "application/zip" {
-		s.handleZipFile(w, r, objectID, stat, startTime)
+	if isZip {
+		s.handleZipFile(w, r, objectID, crc, stat.Size, startTime)
 		return
 	}
 	s.handleRegularFile(w, r, objectID, stat, startTime)
 }
 
 type FileHandler func(w http.ResponseWriter, fileName string, content io.Reader, contentType string) error
+
+func checkGetMethod(r *http.Request) error {
+	if r.Method != http.MethodPost {
+		return fmt.Errorf("method not allowed: %s", r.Method)
+	}
+	return nil
+}
+
+func ParseObjectIDandCRC(r *http.Request) (objectID string, crc uint32, isZip bool, err error) {
+	objectID = chi.URLParam(r, "object_id")
+	if objectID == "" {
+		err = fmt.Errorf("object identifier is required")
+		slog.Error("Ошибка при разборе идентификатора файла: пустой идентификатор объекта", "error", err)
+		return "", 0, false, err
+	}
+
+	if strings.Contains(objectID, ";") {
+		parts := strings.Split(objectID, ";")
+		if len(parts) != 2 {
+			err = fmt.Errorf("invalid format: expected 'fileID;crc' for ZIP archive")
+			slog.Error("Ошибка при разборе идентификатора файла для ZIP-архива", "error", err, "input", objectID)
+			return "", 0, false, err
+		}
+
+		objectID = parts[0]
+		if objectID == "" {
+			err = fmt.Errorf("object identifier is required")
+			slog.Error("Ошибка при разборе идентификатора файла: пустой идентификатор объекта в формате ZIP", "error", err, "input", objectID)
+			return "", 0, false, err
+		}
+
+		crcValue, err := strconv.ParseUint(parts[1], 10, 32)
+		if err != nil {
+			err = fmt.Errorf("failed to parse CRC value: %v", err)
+			slog.Error("Ошибка при разборе значения CRC для ZIP-архива", "error", err, "input", parts[1])
+			return "", 0, false, err
+		}
+
+		slog.Info("Успешно разобран идентификатор ZIP-архива", "object_id", objectID, "crc", crcValue)
+		return objectID, uint32(crcValue), true, nil
+	}
+
+	slog.Info("Успешно разобран идентификатор обычного файла", "object_id", objectID)
+	return objectID, 0, false, nil
+}
 
 func getContentType(fileName string) string {
 	ext := strings.ToLower(filepath.Ext(fileName))
@@ -69,48 +128,75 @@ func handleFile(w http.ResponseWriter, fileName string, content io.Reader, conte
 	return nil
 }
 
-func readObjectToBuffer(object io.Reader) (*bytes.Buffer, error) {
-	buf := new(bytes.Buffer)
-	_, err := io.Copy(buf, object)
-	return buf, err
-}
-
-func findSuitableFile(zipReader *zip.Reader) (*zip.File, error) {
+func findSuitableFile(zipReader *zip.Reader, crc uint32) (*zip.File, error) {
 	for _, file := range zipReader.File {
-		if !file.FileInfo().IsDir() && !strings.HasPrefix(filepath.Base(file.Name), ".") {
+		notDir := isNotDirectory(file)
+		notHidden := isNotHidden(file.Name)
+		crcMatch := matchesCRC(file, crc)
+
+		if notDir && notHidden && crcMatch {
+			slog.Info("Найден подходящий файл", "name", file.Name, "crc", file.CRC32)
 			return file, nil
 		}
+		slog.Debug("Файл отклонён", "name", file.Name, "isDir", !notDir, "hidden", !notHidden, "crcMatch", crcMatch)
 	}
-	return nil, fmt.Errorf("в ZIP-архиве не найдено подходящего файла")
+	slog.Error("В ZIP-архиве не найдено подходящего файла", "crc", crc)
+	return nil, fmt.Errorf("no suitable file found in ZIP archive")
+}
+
+func isNotDirectory(file *zip.File) bool {
+	return !file.FileInfo().IsDir()
+}
+
+// isNotHidden проверяет, что имя файла не начинается с точки (не скрытый файл).
+func isNotHidden(fileName string) bool {
+	baseName := filepath.Base(fileName)
+	return !strings.HasPrefix(baseName, ".")
+}
+
+// matchesCRC проверяет, совпадает ли CRC32 файла с заданным значением.
+func matchesCRC(file *zip.File, crc uint32) bool {
+	return file.CRC32 == crc
 }
 
 // processZip обрабатывает ZIP-архив
-func processZip(w http.ResponseWriter, r *http.Request, object io.Reader, size int64) error {
-	slog.Info("Обработка ZIP-архива")
-	buf, err := readObjectToBuffer(object)
-	if err != nil {
-		return fmt.Errorf("не удалось прочитать данные ZIP: %v", err)
-	}
+func processZip(w http.ResponseWriter, r *http.Request, object io.ReaderAt, size int64, crc uint32) error {
+	slog.Info("Начало обработки ZIP-архива", "размер", size)
 
-	zipReader, err := zip.NewReader(bytes.NewReader(buf.Bytes()), size)
+	zipReader, err := zip.NewReader(object, size)
 	if err != nil {
+		slog.Error("Ошибка при чтении ZIP-архива", "ошибка", err)
 		return fmt.Errorf("не удалось прочитать ZIP-архив: %v", err)
 	}
+	slog.Info("Успешно создан читатель ZIP-архива", "количество_файлов", len(zipReader.File))
 
-	innerFile, err := findSuitableFile(zipReader)
+	innerFile, err := findSuitableFile(zipReader, crc)
 	if err != nil {
+		slog.Error("Ошибка при поиске подходящего файла в ZIP-архиве", "ошибка", err, "crc32", crc)
 		return err
 	}
+	slog.Info("Найден подходящий файл в ZIP-архиве", "имя_файла", innerFile.Name, "crc32", crc)
 
 	rc, err := innerFile.Open()
 	if err != nil {
+		slog.Error("Ошибка при открытии файла в ZIP-архиве", "имя_файла", innerFile.Name, "ошибка", err)
 		return fmt.Errorf("не удалось открыть файл %s в ZIP: %v", innerFile.Name, err)
 	}
 	defer rc.Close()
+	slog.Info("Файл успешно открыт для чтения", "имя_файла", innerFile.Name)
 
 	contentType := getContentType(innerFile.Name)
+	slog.Info("Определен тип содержимого файла", "имя_файла", innerFile.Name, "тип_содержимого", contentType)
+
 	handler := FileHandler(handleFile)
-	return handler(w, innerFile.Name, rc, contentType)
+	err = handler(w, innerFile.Name, rc, contentType)
+	if err != nil {
+		slog.Error("Ошибка при обработке файла через обработчик", "имя_файла", innerFile.Name, "ошибка", err)
+		return err
+	}
+
+	slog.Info("Обработка ZIP-архива успешно завершена", "имя_файла", innerFile.Name)
+	return nil
 }
 
 func (s *Server) getObjectStat(ctx context.Context, objectID string) (minio.ObjectInfo, error) {
@@ -155,7 +241,7 @@ func (s *Server) handleRegularFile(w http.ResponseWriter, r *http.Request, objec
 }
 
 // handleZipFile обрабатывает ZIP-архив
-func (s *Server) handleZipFile(w http.ResponseWriter, r *http.Request, objectID string, stat minio.ObjectInfo, startTime time.Time) {
+func (s *Server) handleZipFile(w http.ResponseWriter, r *http.Request, objectID string, crc uint32, size int64, startTime time.Time) {
 	downloadTime := time.Now()
 	object, err := s.getObject(r.Context(), objectID)
 	if err != nil {
@@ -165,9 +251,9 @@ func (s *Server) handleZipFile(w http.ResponseWriter, r *http.Request, objectID 
 	}
 	defer object.Close()
 
-	err = processZip(w, r, object, stat.Size)
+	err = processZip(w, r, object, size, crc)
 	if err != nil {
-		slog.Error("Не удалось обработать ZIP-архив", "object_id", objectID, "error", err)
+		// slog.Error("Не удалось обработать ZIP-архив", "object_id", objectID, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -35,7 +35,7 @@ func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	slog.Info("Начало обработки запроса на загрузку")
 
-	if err := checkRequestMethod(r); err != nil {
+	if err := checkPostMethod(r); err != nil {
 		http.Error(w, err.Error(), http.StatusMethodNotAllowed)
 		slog.Error("Недопустимый метод запроса", "error", err)
 		return
@@ -46,7 +46,7 @@ func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("Не удалось извлечь имя файла", "error", err)
 	}
 
-	objectID, err := getObjectID(r)
+	objectID, err := parseObjectID(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		slog.Error("Не удалось извлечь object_id", "error", err)
@@ -69,26 +69,10 @@ func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
 
 	uploadStart := time.Now()
 
-	if isStreamContent(contentType) {
-		// Для медиафайлов и ZIP используем потоковую загрузку
-		if err := s.uploadMediaToMinIO(objectID, contentType, originalName, r.Body, -1); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			slog.Error("Ошибка загрузки медиафайла в MinIO", "object_id", objectID, "error", err)
-			return
-		}
-	} else {
-		// Для документов и изображений читаем данные в память
-		data, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "Failed to read request body", http.StatusBadRequest)
-			slog.Error("Ошибка чтения тела запроса", "error", err)
-			return
-		}
-		if err := s.uploadDocumentToMinIO(objectID, contentType, originalName, data); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			slog.Error("Ошибка загрузки документа в MinIO", "object_id", objectID, "error", err)
-			return
-		}
+	if err := s.uploadMediaToMinIO(objectID, contentType, originalName, r.Body, -1); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("Ошибка загрузки медиафайла в MinIO", "object_id", objectID, "error", err)
+		return
 	}
 
 	if originalName == defaultFileName {
@@ -114,14 +98,14 @@ type ObjectResponse struct {
 	UploadDuration float64 `json:"uploadDuration_sec"`
 }
 
-func checkRequestMethod(r *http.Request) error {
+func checkPostMethod(r *http.Request) error {
 	if r.Method != http.MethodPost {
 		return fmt.Errorf("method not allowed: %s", r.Method)
 	}
 	return nil
 }
 
-func getObjectID(r *http.Request) (string, error) {
+func parseObjectID(r *http.Request) (string, error) {
 	objectID := chi.URLParam(r, "object_id")
 	if objectID == "" {
 		return "", fmt.Errorf("object_id is required")
@@ -170,13 +154,13 @@ func generateFileName(contentType string) string {
 	return originalName
 }
 
-func isStreamContent(contentType string) bool {
-	contentType = strings.ToLower(contentType)
-	return strings.HasPrefix(contentType, "audio/") ||
-		strings.HasPrefix(contentType, "video/") ||
-		strings.HasPrefix(contentType, "application/zip") ||
-		strings.HasPrefix(contentType, "application/x-zip-compressed")
-}
+// func isStreamContent(contentType string) bool {
+// 	contentType = strings.ToLower(contentType)
+// 	return strings.HasPrefix(contentType, "audio/") ||
+// 		strings.HasPrefix(contentType, "video/") ||
+// 		strings.HasPrefix(contentType, "application/zip") ||
+// 		strings.HasPrefix(contentType, "application/x-zip-compressed")
+// }
 
 func (s *Server) uploadDocumentToMinIO(objectID, contentType, originalName string, data []byte) error {
 	uploadStart := time.Now()
