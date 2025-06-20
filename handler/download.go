@@ -2,7 +2,6 @@ package handler
 
 import (
 	"archive/zip"
-	"bytes"
 	"strconv"
 
 	"context"
@@ -74,7 +73,7 @@ func checkGetMethod(r *http.Request) error {
 	return nil
 }
 
-func parseObjectIDandCRC(r *http.Request) (objectID string, crc uint32, err error) {
+func parseObjectIDandCRC(r *http.Request) (objectID string, crc32 uint32, err error) {
 	objectID = chi.URLParam(r, "object_id")
 	if objectID == "" {
 		err = fmt.Errorf("object identifier is required")
@@ -154,18 +153,17 @@ func handleFile(w http.ResponseWriter, fileName string, content io.Reader, conte
 	return nil
 }
 
-func findSuitableFile(zipReader *zip.Reader, crc uint32) (*zip.File, error) {
+func findSuitableFile(zipReader *zip.Reader, crc32 uint32) (*zip.File, error) {
 	for _, file := range zipReader.File {
 		notDir := isNotDirectory(file)
 		notHidden := isNotHidden(file.Name)
-		crcMatch := matchesCRC(file, crc)
+		crcMatch := matchesCRC(file, crc32)
 
 		if notDir && notHidden && crcMatch {
-			slog.Info("Найден подходящий файл в ZIP", "name", file.Name, "crc", file.CRC32)
 			return file, nil
 		}
 	}
-	slog.Warn("Подходящий файл в ZIP не найден", "crc", crc)
+	slog.Warn("Подходящий файл в ZIP не найден", "crc32", crc32)
 	return nil, fmt.Errorf("no suitable file found in ZIP archive")
 }
 
@@ -181,22 +179,68 @@ func isNotHidden(fileName string) bool {
 func matchesCRC(file *zip.File, crc uint32) bool {
 	return file.CRC32 == crc
 }
-// налету
-// func processZip(w http.ResponseWriter, r *http.Request, object io.ReaderAt, size int64, crc uint32) error {
-// 	slog.Info("Начало обработки ZIP-архива", "размер", size)
-// 	zipReader, err := zip.NewReader(object, size) // а вот с буфером тут все летает
-// 	if err != nil {
-// 		slog.Error("Ошибка при чтении ZIP-архива", "error", err)
-// 		return fmt.Errorf("failed to read ZIP archive: %v", err)
-// 	}
-// 	slog.Info("Успешно создан читатель ZIP-архива", "количество_файлов", len(zipReader.File))
 
-// 	searchedFile, err := findSuitableFile(zipReader, crc)
+// налету
+func processZip(w http.ResponseWriter, r *http.Request, object *minio.Object, size int64, crc32 uint32) error {
+	slog.Info("Начало обработки ZIP-архива", "size", size)
+
+	zipReader, err := zip.NewReader(object, size)
+	if err != nil {
+		slog.Error("Ошибка при чтении ZIP-архива", "error", err)
+		return fmt.Errorf("failed to read ZIP archive: %v", err)
+	}
+	slog.Info("Успешно создан читатель ZIP-архива", "files_quantity", len(zipReader.File))
+
+	searchedFile, err := findSuitableFile(zipReader, crc32)
+	if err != nil {
+		slog.Error("Не удалось найти подходящий файл в ZIP", "error", err, "crc32", crc32)
+		return err
+	}
+	slog.Info("Найден подходящий файл в ZIP-архиве", "file", searchedFile.Name, "crc32", crc32)
+
+	rc, err := searchedFile.Open()
+	if err != nil {
+		slog.Error("Ошибка при открытии файла в ZIP", "file", searchedFile.Name, "error", err)
+		return fmt.Errorf("failed to open file %s in ZIP: %v", searchedFile.Name, err)
+	}
+	defer rc.Close()
+	slog.Info("Файл успешно открыт для чтения", "file", searchedFile.Name)
+
+	contentType := getContentType(searchedFile.Name)
+	slog.Info("Определен тип содержимого файла", "file", searchedFile.Name, "contentType", contentType)
+
+	handler := FileHandler(handleFile)
+	if err := handler(w, searchedFile.Name, rc, contentType); err != nil {
+		slog.Error("Ошибка при обработке файла из ZIP", "file", searchedFile.Name, "error", err)
+		http.Error(w, "Failed to send file data", http.StatusInternalServerError)
+		return err
+	}
+
+	slog.Info("Обработка ZIP-архива успешно завершена", "file", searchedFile.Name)
+	return nil
+}
+
+// через буфер
+// func processZip(w http.ResponseWriter, r *http.Request, object *minio.Object, size int64, crc32 uint32) error {
+// 	slog.Info("Начало обработки ZIP-архива", "размер", size)
+
+// 	buf := new(bytes.Buffer)
+// 	_, err := io.Copy(buf, object)
 // 	if err != nil {
-// 		slog.Error("Не удалось найти подходящий файл в ZIP", "error", err, "crc", crc)
+// 		return fmt.Errorf("не удалось прочитать данные ZIP: %v", err)
+// 	}
+
+// 	zipReader, err := zip.NewReader(bytes.NewReader(buf.Bytes()), size)
+// 	if err != nil {
+// 		return fmt.Errorf("не удалось прочитать ZIP-архив: %v", err)
+// 	}
+
+// 	searchedFile, err := findSuitableFile(zipReader, crc32)
+// 	if err != nil {
+// 		slog.Error("Не удалось найти подходящий файл в ZIP", "error", err, "crc32", crc32)
 // 		return err
 // 	}
-// 	slog.Info("Найден подходящий файл в ZIP-архиве", "имя_файла", searchedFile.Name, "crc32", crc)
+// 	slog.Info("Найден подходящий файл в ZIP-архиве", "имя_файла", searchedFile.Name, "crc32", crc32)
 
 // 	rc, err := searchedFile.Open()
 // 	if err != nil {
@@ -219,61 +263,6 @@ func matchesCRC(file *zip.File, crc uint32) bool {
 // 	slog.Info("Обработка ZIP-архива успешно завершена", "имя_файла", searchedFile.Name)
 // 	return nil
 // }
-
-// через буфер
-func processZip(w http.ResponseWriter, r *http.Request, object io.ReaderAt, size int64, crc uint32) error {
-	slog.Info("Начало обработки ZIP-архива", "размер", size)
-
-	// Создаем буфер в памяти для хранения данных из object
-	buf := bytes.NewBuffer(make([]byte, 0, size))
-	tempReader := io.NewSectionReader(object, 0, size)
-	start := time.Now()
-	_, err := io.Copy(buf, tempReader)
-	if err != nil {
-		slog.Error("Ошибка при копировании данных в буфер", "error", err)
-		return fmt.Errorf("failed to copy data to buffer: %v", err)
-	}
-	slog.Info("Данные успешно скопированы в буфер", "время_копирования", time.Since(start).Seconds(), "размер_буфера", buf.Len())
-
-	// Создаем новый io.ReaderAt из буфера для zip.NewReader
-	bufferedReaderAt := bytes.NewReader(buf.Bytes())
-
-	// Создаем читатель ZIP-архива из буферизованных данных
-	zipReader, err := zip.NewReader(bufferedReaderAt, size)
-	if err != nil {
-		slog.Error("Ошибка при чтении ZIP-архива", "error", err)
-		return fmt.Errorf("failed to read ZIP archive: %v", err)
-	}
-	slog.Info("Успешно создан читатель ZIP-архива", "количество_файлов", len(zipReader.File))
-
-	searchedFile, err := findSuitableFile(zipReader, crc)
-	if err != nil {
-		slog.Error("Не удалось найти подходящий файл в ZIP", "error", err, "crc", crc)
-		return err
-	}
-	slog.Info("Найден подходящий файл в ZIP-архиве", "имя_файла", searchedFile.Name, "crc32", crc)
-
-	rc, err := searchedFile.Open()
-	if err != nil {
-		slog.Error("Ошибка при открытии файла в ZIP", "file", searchedFile.Name, "error", err)
-		return fmt.Errorf("failed to open file %s in ZIP: %v", searchedFile.Name, err)
-	}
-	defer rc.Close()
-	slog.Info("Файл успешно открыт для чтения", "имя_файла", searchedFile.Name)
-
-	contentType := getContentType(searchedFile.Name)
-	slog.Info("Определен тип содержимого файла", "имя_файла", searchedFile.Name, "тип_содержимого", contentType)
-
-	handler := FileHandler(handleFile)
-	if err := handler(w, searchedFile.Name, rc, contentType); err != nil {
-		slog.Error("Ошибка при обработке файла из ZIP", "file", searchedFile.Name, "error", err)
-		http.Error(w, "Failed to send file data", http.StatusInternalServerError)
-		return err
-	}
-
-	slog.Info("Обработка ZIP-архива успешно завершена", "имя_файла", searchedFile.Name)
-	return nil
-}
 
 func (s *Server) getObjectStat(ctx context.Context, objectID string) (minio.ObjectInfo, error) {
 	return s.MinioClient.Client.StatObject(ctx, s.MinioClient.BucketName, objectID, minio.StatObjectOptions{})
@@ -310,9 +299,8 @@ func (s *Server) handleRegularFile(w http.ResponseWriter, r *http.Request, objec
 		return
 	}
 
-	duration := time.Since(startTime)
 	downloadDuration := time.Since(downloadTime)
-	slog.Info("Файл отправлен клиенту", "object_id", objectID, "duration", duration, "download_time", downloadDuration)
+	slog.Info("Файл отправлен клиенту", "object_id", objectID, "download_time", downloadDuration)
 }
 
 func (s *Server) handleZipFile(w http.ResponseWriter, r *http.Request, objectID string, crc uint32, size int64, startTime time.Time) {
@@ -332,7 +320,32 @@ func (s *Server) handleZipFile(w http.ResponseWriter, r *http.Request, objectID 
 		return
 	}
 
-	duration := time.Since(startTime)
 	downloadDuration := time.Since(downloadTime)
-	slog.Info("ZIP-архив обработан и отправлен клиенту", "object_id", objectID, "duration", duration, "download_time", downloadDuration)
+	slog.Info("ZIP-архив обработан и отправлен клиенту", "object_id", objectID, "download_time", downloadDuration)
 }
+
+// Сделай фиксированный буфер размером 256 кб, и разреши из него брать не более 128 кб, при этом, если буфер занят, то грузи напрямую, пока он не освободится
+
+// После выгрузки файла очищай использованную память
+
+// Создаем буфер в памяти для хранения данных из object
+// buf := bytes.NewBuffer(make([]byte, 256*1024, size))
+
+// start := time.Now()
+// _, err := io.Copy(buf, zipReader)
+// if err != nil {
+// 	slog.Error("Ошибка при копировании данных в буфер", "error", err)
+// 	return fmt.Errorf("failed to copy data to buffer: %v", err)
+// }
+// slog.Info("Данные успешно скопированы в буфер", "время_копирования", time.Since(start).Seconds(), "размер_буфера", buf.Len())
+
+// Создаем новый io.ReaderAt из буфера для zip.NewReader
+// bufferedReaderAt := bytes.NewReader(buf.Bytes())
+
+// Создаем читатель ZIP-архива из буферизованных данных
+// zipReader, err := zip.NewReader(bufferedReaderAt, size)
+// if err != nil {
+// 	slog.Error("Ошибка при чтении ZIP-архива", "error", err)
+// 	return fmt.Errorf("failed to read ZIP archive: %v", err)
+// }
+// slog.Info("Успешно создан читатель ZIP-архива", "количество_файлов", len(zipReader.File))
