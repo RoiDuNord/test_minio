@@ -2,7 +2,10 @@ module test_minio
 
 go 1.24.4
 
-require github.com/minio/minio-go/v7 v7.0.92
+require (
+	github.com/minio/minio-go/v7 v7.0.92
+	golang.org/x/sync v0.15.0
+)
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
