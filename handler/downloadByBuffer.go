@@ -154,32 +154,14 @@
 // 	return nil
 // }
 
-// func findSuitableFile(zipReader *zip.Reader, crc uint32) (*zip.File, error) {
+// func findSuitableFile(zipReader *zip.Reader, crc32 uint32) (*zip.File, error) {
 // 	for _, file := range zipReader.File {
-// 		notDir := isNotDirectory(file)
-// 		notHidden := isNotHidden(file.Name)
-// 		crcMatch := matchesCRC(file, crc)
-
-// 		if notDir && notHidden && crcMatch {
-// 			slog.Info("Найден подходящий файл в ZIP", "name", file.Name, "crc", file.CRC32)
+// 		fmt.Println("crc32 of file", file.CRC32)
+// 		if file.CRC32 == crc32 {
 // 			return file, nil
 // 		}
 // 	}
-// 	slog.Warn("Подходящий файл в ZIP не найден", "crc", crc)
-// 	return nil, fmt.Errorf("no suitable file found in ZIP archive")
-// }
-
-// func isNotDirectory(file *zip.File) bool {
-// 	return !file.FileInfo().IsDir()
-// }
-
-// func isNotHidden(fileName string) bool {
-// 	baseName := filepath.Base(fileName)
-// 	return !strings.HasPrefix(baseName, ".")
-// }
-
-// func matchesCRC(file *zip.File, crc uint32) bool {
-// 	return file.CRC32 == crc
+// 	return nil, fmt.Errorf("file with CRC32 %d not found in ZIP archive", crc32)
 // }
 
 // func processZip(w http.ResponseWriter, r *http.Request, object io.ReaderAt, size int64, crc uint32) error {
@@ -299,3 +281,47 @@
 // }
 
 package handler
+
+// через буфер
+// func processZip(w http.ResponseWriter, r *http.Request, object *minio.Object, size int64, crc32 uint32) error {
+// 	slog.Info("Начало обработки ZIP-архива", "размер", size)
+
+// 	buf := new(bytes.Buffer)
+// 	_, err := io.Copy(buf, object)
+// 	if err != nil {
+// 		return fmt.Errorf("не удалось прочитать данные ZIP: %v", err)
+// 	}
+
+// 	zipReader, err := zip.NewReader(bytes.NewReader(buf.Bytes()), size)
+// 	if err != nil {
+// 		return fmt.Errorf("не удалось прочитать ZIP-архив: %v", err)
+// 	}
+
+// 	searchedFile, err := findSuitableFile(zipReader, crc32)
+// 	if err != nil {
+// 		slog.Error("Не удалось найти подходящий файл в ZIP", "error", err, "crc32", crc32)
+// 		return err
+// 	}
+// 	slog.Info("Найден подходящий файл в ZIP-архиве", "имя_файла", searchedFile.Name, "crc32", crc32)
+
+// 	rc, err := searchedFile.Open()
+// 	if err != nil {
+// 		slog.Error("Ошибка при открытии файла в ZIP", "file", searchedFile.Name, "error", err)
+// 		return fmt.Errorf("failed to open file %s in ZIP: %v", searchedFile.Name, err)
+// 	}
+// 	defer rc.Close()
+// 	slog.Info("Файл успешно открыт для чтения", "имя_файла", searchedFile.Name)
+
+// 	contentType := getContentType(searchedFile.Name)
+// 	slog.Info("Определен тип содержимого файла", "имя_файла", searchedFile.Name, "contentType", contentType)
+
+// 	handler := FileHandler(handleFile)
+// 	if err := handler(w, searchedFile.Name, rc, contentType); err != nil {
+// 		slog.Error("Ошибка при обработке файла из ZIP", "file", searchedFile.Name, "error", err)
+// 		http.Error(w, "Failed to send file data", http.StatusInternalServerError)
+// 		return err
+// 	}
+
+// 	slog.Info("Обработка ZIP-архива успешно завершена", "имя_файла", searchedFile.Name)
+// 	return nil
+// }

@@ -7,6 +7,15 @@ import (
 	"github.com/joho/godotenv"
 )
 
+type BasicConfig interface {
+	Load(map[string]string) error
+	Validate() error
+}
+
+type AppConfig struct {
+	Port int
+}
+
 type MinIOConfig struct {
 	Endpoint        string
 	AccessKeyID     string
@@ -16,20 +25,9 @@ type MinIOConfig struct {
 	Location        string
 }
 
-func Get() (*MinIOConfig, error) {
-	cfg := &MinIOConfig{}
-
-	if err := cfg.Load(); err != nil {
-		slog.Error("Ошибка при загрузке конфигурации из .env", "error", err)
-		return nil, err
-	}
-	if err := cfg.Validate(); err != nil {
-		slog.Error("Ошибка валидации конфигурации из .env", "error", err)
-		return nil, err
-	}
-
-	slog.Info("config успешно загружен")
-	return cfg, nil
+type Config struct {
+	App   *AppConfig
+	MinIO *MinIOConfig
 }
 
 func readEnv() (map[string]string, error) {
@@ -39,4 +37,37 @@ func readEnv() (map[string]string, error) {
 		return nil, fmt.Errorf("ошибка при чтении переменных окружения: %w", err)
 	}
 	return myEnv, nil
+}
+
+func Get() (*Config, error) {
+	if err := godotenv.Load(); err != nil {
+		slog.Error("Ошибка при загрузке .env файла", "error", err)
+		return nil, fmt.Errorf("ошибка при загрузке .env файла: %w", err)
+	}
+
+	envMap, err := readEnv()
+	if err != nil {
+		return nil, fmt.Errorf("ошибка при чтении переменных окружения: %w", err)
+	}
+
+	appCfg := &AppConfig{}
+	minioCfg := &MinIOConfig{}
+
+	configs := []BasicConfig{appCfg, minioCfg}
+	for _, cfg := range configs {
+		if err := cfg.Load(envMap); err != nil {
+			slog.Error("Ошибка при загрузке конфигурации", "error", err)
+			return nil, err
+		}
+		if err := cfg.Validate(); err != nil {
+			slog.Error("Ошибка валидации конфигурации", "error", err)
+			return nil, err
+		}
+	}
+
+	slog.Info("Все конфигурации успешно загружены")
+	return &Config{
+		App:   appCfg,
+		MinIO: minioCfg,
+	}, nil
 }

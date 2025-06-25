@@ -23,17 +23,17 @@ func Run() error {
 		return err
 	}
 
-	minioClient, err := client.Create(*cfg)
+	minioClient, err := client.Create(*cfg.MinIO)
 	if err != nil {
 		return err
 	}
 
-	err = bucket.Create(ctx, minioClient, cfg.BucketName, cfg.Location)
+	err = bucket.Create(ctx, minioClient, cfg.MinIO.BucketName, cfg.MinIO.Location)
 	if err != nil {
 		return err
 	}
 
-	s := handler.NewServer(ctx, minioClient, cfg.BucketName)
+	s := handler.NewServer(ctx, minioClient, cfg.MinIO.BucketName, cfg.App.Port)
 
 	go startHTTPServer(s.HTTPServer, s.HTTPServer.Addr)
 

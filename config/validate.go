@@ -47,3 +47,10 @@ var bucketNameRegex = regexp.MustCompile(`^[a-z0-9\-]+$`)
 func isValidBucketName(bucketName string) bool {
 	return bucketNameRegex.MatchString(bucketName)
 }
+
+func (c *AppConfig) Validate() error {
+	if c.Port <= 0 || c.Port > 65535 {
+		return fmt.Errorf("APP_PORT должен быть в диапазоне 1-65535, получено: %d", c.Port)
+	}
+	return nil
+}

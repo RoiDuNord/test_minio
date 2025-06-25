@@ -2,9 +2,9 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
-	"sync"
 
 	"github.com/go-chi/chi"
 	"github.com/minio/minio-go/v7"
@@ -20,10 +20,9 @@ type Server struct {
 	Ctx         context.Context
 	MinioClient MinioClient
 	Router      *chi.Mux
-	Objects     sync.Map
 }
 
-func NewServer(ctx context.Context, minioClient *minio.Client, bucketName string) *Server {
+func NewServer(ctx context.Context, minioClient *minio.Client, bucketName string, port int) *Server {
 	router := chi.NewRouter()
 
 	client := &MinioClient{
@@ -40,7 +39,7 @@ func NewServer(ctx context.Context, minioClient *minio.Client, bucketName string
 	setupRoutes(s)
 
 	s.HTTPServer = &http.Server{
-		Addr:    ":8080",
+		Addr:    fmt.Sprintf(":%d", port),
 		Handler: router,
 	}
 

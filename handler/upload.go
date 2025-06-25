@@ -478,8 +478,8 @@ func (pr *ProgressReader) Read(p []byte) (int, error) {
 	pr.totalBytes += n
 	pr.chunkCount++
 	now := time.Now()
-	if time.Since(pr.last) >= 1*time.Second { // почему выдает результаты с задержкой?
-		slog.Info("Прогресс загрузки в MinIO", "chunk_number", pr.chunkCount, "bytes_read_in_chunk", n, "total_megabytes", pr.totalBytes/1024/1024)
+	if time.Since(pr.last) >= 1*time.Second {
+		slog.Info("Прогресс чтения", "chunk_number", pr.chunkCount, "bytes_write_in_chunk", n, "total_Mb", pr.totalBytes/1024/1024)
 		pr.last = now
 	}
 	return n, err
@@ -509,7 +509,7 @@ func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contentType := getContentType(originalName)
-	slog.Info("Определен тип содержимого файла", "имя_файла", originalName, "тип_содержимого", contentType)
+	slog.Info("Определен тип содержимого файла", "file_name", originalName, "content_type", contentType)
 
 	uploadStart := time.Now()
 

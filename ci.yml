@@ -1,0 +1,90 @@
+name: CI Pipeline
+
+# Определяем, когда запускать workflow
+on:
+  push:
+    branches: [ main, develop ] # Запуск при push в ветки main и develop
+  pull_request:
+    branches: [ main, develop ] # Запуск при создании PR в эти ветки
+
+# Определяем переменные окружения, если нужно
+env:
+  GO_VERSION: '1.24' # Версия Go для сборки и тестов
+
+# Определяем задачи (jobs)
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest # Используем последнюю версию Ubuntu как runner
+
+    steps:
+      # Шаг 1: Клонируем репозиторий
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Шаг 2: Устанавливаем Go
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # Шаг 3: Кэшируем зависимости Go
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      # Шаг 4: Устанавливаем зависимости
+      - name: Install dependencies
+        run: go mod download
+
+      # Шаг 5: Запускаем тесты
+      - name: Run tests
+        run: go test -v ./...
+
+      # Шаг 6: Сборка проекта
+      - name: Build
+        run: go build -o myapp ./cmd/main.go
+
+      # Шаг 7 (опционально): Проверка форматирования кода
+      - name: Check formatting
+        run: |
+          gofmt -l .
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Code is not formatted. Run 'gofmt -w .' to fix."
+            exit 1
+          fi
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # Шаг: Установка и запуск линтера (например, golangci-lint)
+      - name: Run linter
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+
+stages:
+  - build
+
+build_job:
+  stage: build
+  image: docker:24.0
+  services:
+    - docker:24.0-dind
+  variables:
+    COMPOSE_BAKE: "true"
+  script:
+    - docker-compose build

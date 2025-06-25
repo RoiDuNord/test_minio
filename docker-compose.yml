@@ -1,0 +1,18 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: s3_rest
+    env_file:
+      - .env
+    ports:
+      - "${APP_PORT}:${APP_PORT}"
+    restart: no
+    networks:
+      - app-net
+
+networks:
+  app-net:
+    driver: bridge
+    name: app-net

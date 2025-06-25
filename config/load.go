@@ -3,15 +3,11 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 )
 
-func (c *MinIOConfig) Load() error {
-	envMap, err := readEnv()
-	if err != nil {
-		return fmt.Errorf("ошибка при чтении переменных окружения: %w", err)
-	}
-
+func (c *MinIOConfig) Load(envMap map[string]string) error {
 	var ok bool
 
 	c.Endpoint, ok = envMap["MINIO_ENDPOINT"]
@@ -47,5 +43,20 @@ func (c *MinIOConfig) Load() error {
 		slog.Warn("Переменная MINIO_LOCATION не определена в .env")
 	}
 
+	return nil
+}
+
+func (c *AppConfig) Load(envMap map[string]string) error {
+	portStr, ok := envMap["APP_PORT"]
+	if !ok {
+		slog.Warn("Переменная APP_PORT не определена в .env")
+	}
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("ошибка преобразования APP_PORT в число: %w", err)
+	}
+
+	c.Port = port
 	return nil
 }
