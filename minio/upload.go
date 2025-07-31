@@ -1,6 +1,7 @@
-package handler
+package minio
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,16 +34,7 @@ type ObjectResponse struct {
 	UploadDuration float64 `json:"uploadDuration_sec"`
 }
 
-func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
-	startTime := time.Now()
-	slog.Info("Начало обработки запроса на загрузку")
-
-	if err := checkPostMethod(r); err != nil {
-		http.Error(w, err.Error(), http.StatusMethodNotAllowed)
-		slog.Error("Недопустимый метод запроса", "error", err)
-		return
-	}
-
+func (m *Minio) UploadFile(objectID string, data io.Reader) error {
 	originalName, err := parseFileNameFromDisposition(r)
 	if err != nil {
 		slog.Warn("Не удалось извлечь имя файла", "error", err)
@@ -76,6 +68,29 @@ func (s *Server) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sendJSONResponse(w, objectID, originalName, contentType, startTime, uploadStart)
+	return nil
+}
+
+type ProgressReader struct {
+	r          io.Reader
+	totalBytes int
+	chunkCount int
+	last       time.Time
+}
+
+func (pr *ProgressReader) Read(p []byte) (int, error) {
+	n, err := pr.r.Read(p)
+	if err != nil {
+		return n, err
+	}
+	pr.totalBytes += n
+	pr.chunkCount++
+	now := time.Now()
+	if time.Since(pr.last) >= 1*time.Second {
+		slog.Info("Прогресс чтения", "chunk_number", pr.chunkCount, "bytes_write_in_chunk", n, "total_Mb", pr.totalBytes/1024/1024)
+		pr.last = now
+	}
+	return n, err
 }
 
 func checkPostMethod(r *http.Request) error {
@@ -131,11 +146,11 @@ func generateFileName(contentType string) string {
 	return originalName
 }
 
-func (s *Server) uploadObjectToMinIO(objectID, contentType, originalName string, body io.Reader, size int64) error {
+func (m *Minio) uploadObjectToMinIO(ctx context.Context, objectID, contentType, originalName string, body io.Reader, size int64) error {
 	uploadStart := time.Now()
-	_, err := s.FileManager.Client.PutObject(
-		s.Ctx,
-		s.FileManager.BucketName,
+	_, err := m.client.PutObject(
+		ctx,
+		m.bucketName,
 		objectID,
 		body,
 		size,

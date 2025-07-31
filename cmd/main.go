@@ -1,7 +1,7 @@
 package main
 
 import (
-	"test_minio/server"
+	"test_minio/app"
 	// "test_minio/handler" для Swagger
 )
 
@@ -11,8 +11,7 @@ import (
 // @API Server for MinIO Uploading and Downloading
 
 func main() {
-	if err := server.Run(); err != nil {
+	if err := app.Run(); err != nil {
 		return
 	}
 }
-

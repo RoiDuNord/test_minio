@@ -1,4 +1,4 @@
-package server
+package app
 
 import (
 	"context"
@@ -8,10 +8,10 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"test_minio/bucket"
-	"test_minio/client"
+
 	"test_minio/config"
 	"test_minio/handler"
+	"test_minio/minio"
 )
 
 func Run() error {
@@ -23,21 +23,21 @@ func Run() error {
 		return err
 	}
 
-	minioClient, err := client.Create(*cfg.MinIO)
+	minio, err := minio.Init(cfg.MinIO)
 	if err != nil {
 		return err
 	}
 
-	err = bucket.Create(ctx, minioClient, cfg.MinIO.BucketName, cfg.MinIO.Location)
+	err = minio.CreateBucket(ctx, cfg.MinIO.BucketName, cfg.MinIO.Location)
 	if err != nil {
 		return err
 	}
 
-	s := handler.NewServer(ctx, minioClient, cfg.MinIO.BucketName, cfg.App.Port)
+	server := handler.NewServer(ctx, minio, cfg.MinIO.BucketName, cfg.App.Port)
 
-	go startHTTPServer(s.HTTPServer, s.HTTPServer.Addr)
+	go startHTTPServer(server.HTTPServer, server.HTTPServer.Addr)
 
-	return shutdownServer(s)
+	return shutdownServer(server)
 
 }
 
