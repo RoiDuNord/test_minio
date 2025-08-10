@@ -17,11 +17,13 @@ type AppConfig struct {
 }
 
 type MinIOConfig struct {
+	UseSSL          bool
 	Endpoint        string
 	AccessKeyID     string
 	SecretAccessKey string
 	BucketName      string
 	Location        string
+	Storage         string
 }
 
 type Config struct {

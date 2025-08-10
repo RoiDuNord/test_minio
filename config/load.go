@@ -34,6 +34,18 @@ func (c *MinIOConfig) Load(envMap map[string]string) error {
 		slog.Warn("Переменная MINIO_LOCATION не определена в .env")
 	}
 
+	c.Storage, ok = envMap["MINIO_STORAGE"]
+	if !ok {
+		slog.Warn("Переменная MINIO_LOCATION не определена в .env")
+	}
+
+	useSSL, ok := envMap["MINIO_USE_SSL"]
+	if !ok {
+		slog.Warn("Переменная MINIO_USE_SSL не определена в .env")
+	} else {
+		c.UseSSL = (useSSL == "true")
+	}
+
 	return nil
 }
 

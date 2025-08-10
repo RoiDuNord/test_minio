@@ -26,6 +26,9 @@ func (c *MinIOConfig) Validate() error {
 	if c.Location == "" {
 		missingVars = append(missingVars, "MINIO_LOCATION")
 	}
+	if c.Storage == "" {
+		missingVars = append(missingVars, "MINIO_STORAGE")
+	}
 
 	if len(missingVars) > 0 {
 		message := fmt.Sprintf("Необходимо задать переменные окружения: %s", strings.Join(missingVars, ", "))

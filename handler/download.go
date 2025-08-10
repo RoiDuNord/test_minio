@@ -3,7 +3,7 @@ package handler
 import (
 	"log/slog"
 	"net/http"
-	"test_minio/file"
+	"test_minio/handler/file"
 
 	"github.com/go-chi/chi"
 )
@@ -20,6 +20,8 @@ import (
 // @Failure 500 {object} string "Internal server error"
 // @Router /objects/{object_id}/content [get]
 func (s *Server) Download(w http.ResponseWriter, r *http.Request) {
+	slog.Info("Начало обработки запроса на скачивание")
+
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		slog.Error("Недопустимый метод запроса")
@@ -33,19 +35,9 @@ func (s *Server) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.FileManager.DownloadFile(w, s.Ctx, objectID, crc32)
-	if err != nil {
+	if err := s.FileManager.DownloadFile(w, s.Ctx, objectID, crc32); err != nil {
 		slog.Error("Ошибка при обработке файла", "object_id", objectID, "error", err)
 		http.Error(w, "Failed to send file data", http.StatusInternalServerError)
 		return
 	}
 }
-
-// handler := FileHandler(handleFile)
-// if err := handler(w, fileName, rc, contentType); err != nil {
-// 	slog.Error("Ошибка при обработке файла", "file", fileName, "error", err)
-// 	http.Error(w, "Failed to send file data", http.StatusInternalServerError)
-// 	return
-// }
-
-// s.FileManager.DownloadFile(r.Context(), objectID, crc32)

@@ -23,17 +23,19 @@ func Run() error {
 		return err
 	}
 
+	fmt.Println(cfg)
+
 	minio, err := minio.Init(cfg.MinIO)
 	if err != nil {
 		return err
 	}
 
-	err = minio.CreateBucket(ctx, cfg.MinIO.BucketName, cfg.MinIO.Location)
+	err = minio.CreateBucket(ctx, cfg.MinIO.Location)
 	if err != nil {
 		return err
 	}
 
-	server := handler.NewServer(ctx, minio, cfg.MinIO.BucketName, cfg.App.Port)
+	server := handler.NewServer(ctx, minio, cfg.App.Port)
 
 	go startHTTPServer(server.HTTPServer, server.HTTPServer.Addr)
 
@@ -59,20 +61,20 @@ func shutdownServer(s *handler.Server) error {
 
 	select {
 	case <-shutdownSignals:
-		slog.Info("received shutdown signal")
+		slog.Info("получен сигнал завершения работы")
 	case <-s.Ctx.Done():
-		slog.Info("context deadline exceeded")
+		slog.Info("истекло время ожидания контекста")
 	}
 
 	if err := server.Shutdown(s.Ctx); err != nil {
-		slog.Error("graceful shutdown failed", "error", err)
+		slog.Error("не удалось корректно завершить работу сервера", "ошибка", err)
 
 		if err := server.Close(); err != nil {
-			slog.Error("forced shutdown failed", "error", err)
+			slog.Error("не удалось принудительно завершить работу сервера", "ошибка", err)
 			return err
 		}
 	}
 
-	slog.Info("server shutdown complete")
+	slog.Info("сервер успешно завершил работу")
 	return nil
 }

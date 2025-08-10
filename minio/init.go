@@ -20,6 +20,7 @@ func Init(cfg config.MinIOConfig) (*Minio, error) {
 	minioClient, err := minio.New(cfg.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
 		Region: cfg.Location,
+		Secure: cfg.UseSSL,
 	})
 	if err != nil {
 		slog.Error("Ошибка при подключении к MinIO", "error", err)
@@ -28,21 +29,22 @@ func Init(cfg config.MinIOConfig) (*Minio, error) {
 
 	slog.Info("minioClient подключен", "endpoint", cfg.Endpoint)
 	return &Minio{
-		client: minioClient,
+		client:     minioClient,
+		bucketName: cfg.BucketName,
 	}, nil
 }
 
-func (m *Minio) CreateBucket(ctx context.Context, bucketName string, location string) error {
+func (m *Minio) CreateBucket(ctx context.Context, location string) error {
 	slog.Info("Попытка создания бакета")
-	err := m.client.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{Region: location})
-	if err != nil {
+
+	if err := m.client.MakeBucket(ctx, m.bucketName, minio.MakeBucketOptions{Region: location}); err != nil {
 		if isBucketAlreadyExists(err) {
-			slog.Info("Бакет был создан параллельно другим процессом")
+			slog.Info("Бакет уже существует")
 			return nil
 		}
 
 		slog.Error("Ошибка создания бакета", "error", err)
-		return fmt.Errorf("ошибка создания бакета:%w", err)
+		return fmt.Errorf("ошибка создания бакета: %w", err)
 	}
 
 	slog.Info("Бакет успешно создан")
@@ -50,12 +52,6 @@ func (m *Minio) CreateBucket(ctx context.Context, bucketName string, location st
 }
 
 func isBucketAlreadyExists(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "BucketAlreadyExists")
+	errMsg := err.Error()
+	return strings.Contains(errMsg, "BucketAlreadyExists") || strings.Contains(errMsg, "Your previous request to create the named bucket succeeded and you already own it.")
 }
-
-// func (m *Minio) GetObject(ctx, objID) {
-// 	m.client.GetObject(ctx, m.bucketName, objID, minio.GetObjectOptions{})
-// }
