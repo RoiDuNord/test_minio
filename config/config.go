@@ -13,6 +13,7 @@ type BasicConfig interface {
 }
 
 type AppConfig struct {
+	Host string
 	Port int
 }
 

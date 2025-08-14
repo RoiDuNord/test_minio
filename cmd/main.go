@@ -1,8 +1,8 @@
 package main
 
 import (
-	"test_minio/app"
-	// "test_minio/handler" для Swagger
+	"s3_multiclient/app"
+	// "s3_multiclient/fileManager" для Swagger
 )
 
 // @title MinIOClient API

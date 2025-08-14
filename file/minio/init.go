@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"test_minio/config"
+	"s3_multiclient/config"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"

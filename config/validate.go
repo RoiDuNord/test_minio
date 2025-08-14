@@ -8,25 +8,25 @@ import (
 	"strings"
 )
 
-func (c *MinIOConfig) Validate() error {
+func (mc *MinIOConfig) Validate() error {
 	missingVars := []string{}
 
-	if c.Endpoint == "" {
+	if mc.Endpoint == "" {
 		missingVars = append(missingVars, "MINIO_ENDPOINT")
 	}
-	if c.AccessKeyID == "" {
+	if mc.AccessKeyID == "" {
 		missingVars = append(missingVars, "MINIO_ACCESS_KEY")
 	}
-	if c.SecretAccessKey == "" {
+	if mc.SecretAccessKey == "" {
 		missingVars = append(missingVars, "MINIO_SECRET_KEY")
 	}
-	if c.BucketName == "" {
+	if mc.BucketName == "" {
 		missingVars = append(missingVars, "MINIO_BUCKET_NAME")
 	}
-	if c.Location == "" {
+	if mc.Location == "" {
 		missingVars = append(missingVars, "MINIO_LOCATION")
 	}
-	if c.Storage == "" {
+	if mc.Storage == "" {
 		missingVars = append(missingVars, "MINIO_STORAGE")
 	}
 
@@ -36,8 +36,8 @@ func (c *MinIOConfig) Validate() error {
 		return errors.New(message)
 	}
 
-	if !isValidBucketName(c.BucketName) {
-		message := fmt.Sprintf("Имя бакета '%s' содержит недопустимые символы. Используйте только строчные буквы, цифры и дефисы.", c.BucketName)
+	if !isValidBucketName(mc.BucketName) {
+		message := fmt.Sprintf("Имя бакета '%s' содержит недопустимые символы. Используйте только строчные буквы, цифры и дефисы.", mc.BucketName)
 		slog.Error(message)
 		return errors.New(message)
 	}
@@ -51,9 +51,9 @@ func isValidBucketName(bucketName string) bool {
 	return bucketNameRegex.MatchString(bucketName)
 }
 
-func (c *AppConfig) Validate() error {
-	if c.Port <= 0 || c.Port > 65535 {
-		return fmt.Errorf("APP_PORT должен быть в диапазоне 1-65535, получено: %d", c.Port)
+func (ap *AppConfig) Validate() error {
+	if ap.Port <= 0 || ap.Port > 65535 {
+		return fmt.Errorf("APP_PORT должен быть в диапазоне 1-65535, получено: %d", ap.Port)
 	}
 	return nil
 }
