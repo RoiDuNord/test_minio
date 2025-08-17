@@ -2,11 +2,10 @@ package app
 
 import (
 	"context"
-
 	"s3_multiclient/config"
 	"s3_multiclient/file/minio"
-	"s3_multiclient/handler"
 	"s3_multiclient/load"
+	"s3_multiclient/server"
 )
 
 func Run() error {
@@ -18,18 +17,18 @@ func Run() error {
 		return err
 	}
 
-	minio, err := minio.Init(cfg.MinIO)
+	minioLoader, err := minio.Init(cfg.MinIO)
 	if err != nil {
 		return err
 	}
 
-	if err = minio.CreateBucket(ctx, cfg.MinIO.Location); err != nil {
+	if err = minioLoader.CreateBucket(ctx, cfg.MinIO.Location); err != nil {
 		return err
 	}
 
-	loader := load.Init(minio)
+	loader := load.Init(minioLoader)
 
-	server := handler.NewServer(ctx, loader)
+	server := server.Init(ctx, loader)
 
 	if err := server.Start(cfg.App); err != nil { // тут внутри горутина
 		return err

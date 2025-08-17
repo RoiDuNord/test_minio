@@ -2,11 +2,12 @@ package load
 
 import (
 	"context"
+	"s3_multiclient/server"
 )
 
 type FileManager interface {
-	UploadFile(ctx context.Context, progressReader *ProgressReader, objectID, contentType, originalFileName string, contentLength int64) error
-	DownloadFile(ctx context.Context, pw *ProgressWriter, objectID string, crc32 uint32) error
+	UploadFile(ctx context.Context, progressReader *ProgressReader, data *server.UploadRequestMetadata) error
+	DownloadFile(ctx context.Context, pw *ProgressWriter, data *server.DownloadRequestMetadata) error
 	DeleteFile(ctx context.Context, objectID string) error
 }
 

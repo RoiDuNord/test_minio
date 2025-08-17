@@ -4,19 +4,19 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"s3_multiclient/config"
+	"strings"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-type Minio struct {
+type MinioLoader struct {
 	client     *minio.Client
 	bucketName string
 }
 
-func Init(cfg config.MinIOConfig) (*Minio, error) {
+func Init(cfg config.MinIOConfig) (*MinioLoader, error) {
 	minioClient, err := minio.New(cfg.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
 		Region: cfg.Location,
@@ -27,17 +27,17 @@ func Init(cfg config.MinIOConfig) (*Minio, error) {
 		return nil, err
 	}
 
-	slog.Info("minioClient подключен", "endpoint", cfg.Endpoint)
-	return &Minio{
+	slog.Info("MinioClient подключен", "endpoint", cfg.Endpoint)
+	return &MinioLoader{
 		client:     minioClient,
 		bucketName: cfg.BucketName,
 	}, nil
 }
 
-func (m *Minio) CreateBucket(ctx context.Context, location string) error {
+func (ml *MinioLoader) CreateBucket(ctx context.Context, location string) error {
 	slog.Info("Попытка создания бакета")
 
-	if err := m.client.MakeBucket(ctx, m.bucketName, minio.MakeBucketOptions{Region: location}); err != nil {
+	if err := ml.client.MakeBucket(ctx, ml.bucketName, minio.MakeBucketOptions{Region: location}); err != nil {
 		if isBucketAlreadyExists(err) {
 			slog.Info("Бакет уже существует")
 			return nil

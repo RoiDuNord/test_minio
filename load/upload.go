@@ -3,12 +3,13 @@ package load
 import (
 	"context"
 	"net/http"
+	"s3_multiclient/server"
 )
 
-func (l *Loader) Upload(r *http.Request, ctx context.Context, objectID, contentType, originalFileName string, contentLength int64) error {
+func (l *Loader) Upload(r *http.Request, ctx context.Context, data *server.UploadRequestMetadata) error {
 	progressReader := newProgressReader(r)
 
-	if err := l.fileManager.UploadFile(ctx, progressReader, objectID, contentType, originalFileName, contentLength); err != nil {
+	if err := l.fileManager.UploadFile(ctx, progressReader, data); err != nil {
 		return err
 	}
 
